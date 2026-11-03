@@ -1,0 +1,8 @@
+# dsh-session-mover —— bundle patch
+#
+# 只挂一行：宿主半（index.js）负责改写 workspace 归属账本并提供内部 HTTP 路由，
+# 客户端半（client.js）负责侧栏的拖拽交互。客户端半的模块图顺序由 package.json
+# 的 dsh.client.inject 声明（那里写包名），这里不重复。
+- insert:
+    - id: session-mover
+      name: dsh-session-mover

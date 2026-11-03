@@ -1,0 +1,82 @@
+{
+  "name": "dsh-session-mover",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "拖动会话到另一个项目分组，即可修改该对话的所属项目。",
+  "main": "index.js",
+  "exports": {
+    ".": {
+      "default": "./index.js"
+    },
+    "./client": {
+      "default": "./client.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/core.js",
+    "lib/fork.js",
+    "lib/view.js",
+    "lib/workdir.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "test/core-test.mjs",
+    "test/scroll-test.mjs",
+    "test/view-test.mjs",
+    "test/client-test.mjs",
+    "test/fork-test.mjs"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    },
+    "manifestVersion": 1
+  },
+  "scripts": {
+    "test": "node test/core-test.mjs && node test/scroll-test.mjs && node test/view-test.mjs && node test/client-test.mjs && node test/fork-test.mjs",
+    "check": "node --check index.js && node --check client.js && npm test && npm pack --dry-run",
+    "prepublishOnly": "npm run check"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "railgun20001"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "deepseek-harness-plugin",
+    "cordis",
+    "session",
+    "workspace",
+    "drag-and-drop"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/railgun20001/dsh-session-mover.git"
+  },
+  "homepage": "https://github.com/railgun20001/dsh-session-mover#readme",
+  "bugs": {
+    "url": "https://github.com/railgun20001/dsh-session-mover/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

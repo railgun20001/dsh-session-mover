@@ -1,0 +1,38 @@
+# CI：开源仓库的唯一门禁——全部用例通过，且发布产物能正常打包
+#
+# 本插件零 npm 依赖，因此不需要 install 步骤；`npm run check` 依次执行
+# `node --check`（宿主半 / 客户端半语法）、全部用例，以及 `npm pack --dry-run`
+# （确认 files 清单能生成发布产物）。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check (node ${{ matrix.node }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows 是主要目标平台，Linux 用于守住「纯逻辑层不依赖平台」这条约束。
+        # 只测 22 / 24：GitHub 已在回收 Node 20 的运行环境；engines.node 仍声明
+        # >= 20，代表运行时最低要求。
+        os: [windows-latest, ubuntu-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: 语法检查、跑全部用例并校验打包清单
+        run: npm run check
