@@ -71,6 +71,10 @@ window.__ModuleLoader__.load({
     const MOVE_ROUTE = `/${PKG}/api/move`
     /** 归属投影接口：与宿主半的 `OWNERSHIP_PATH` 一致。 */
     const OWNERSHIP_ROUTE = `/${PKG}/api/ownership`
+    /** 还原接口：与宿主半的 `RESTORE_PATH` 一致（把受管会话搬回原目录）。 */
+    const RESTORE_ROUTE = `/${PKG}/api/restore`
+    /** 受管会话清单接口：与宿主半的 `MANAGED_PATH` 一致（只读）。 */
+    const MANAGED_ROUTE = `/${PKG}/api/managed`
     /** 拖动期间挂在 `<body>` 上的类名（用来点亮所有项目分组）。 */
     const DRAG_CLASS = 'dsm-dragging'
     /** 当前悬停目标上的标记属性。 */
@@ -79,6 +83,8 @@ window.__ModuleLoader__.load({
     const SOURCE_ATTR = 'data-dsm-drag-source'
     /** 提示条自动消失时间（毫秒）。 */
     const NOTICE_TIMEOUT = 4000
+    /** 带操作按钮的提示条停留更久，给用户留出点「撤销」的时间。 */
+    const NOTICE_ACTION_TIMEOUT = 15000
 
     /**
      * 边缘自动滚动的触发带高度（CSS 像素）。
@@ -106,6 +112,12 @@ window.__ModuleLoader__.load({
       'move.same': '这段对话已经在「{name}」里了',
       'move.failed': '移动失败：{message}',
       'move.noWorkingDirectory': '已移动到「{name}」（该对话尚未加载，工作目录保持不变）',
+      'move.undo': '还原',
+      'restore.done': '已还原到「{name}」',
+      'restore.ungrouped': '原项目已不存在，对话已回到未分组',
+      'restore.failed': '还原失败：{message}',
+      'restore.none': '没有需要还原的对话',
+      'restore.allDone': '已还原 {count} 个对话',
       'notice.dismiss': '知道了',
     }
 
@@ -115,6 +127,12 @@ window.__ModuleLoader__.load({
       'move.same': 'This conversation is already in “{name}”',
       'move.failed': 'Move failed: {message}',
       'move.noWorkingDirectory': 'Moved to “{name}” (conversation not loaded; working directory unchanged)',
+      'move.undo': 'Restore',
+      'restore.done': 'Restored to “{name}”',
+      'restore.ungrouped': 'The original project is gone; the conversation is back under Ungrouped',
+      'restore.failed': 'Restore failed: {message}',
+      'restore.none': 'Nothing to restore',
+      'restore.allDone': 'Restored {count} conversation(s)',
       'notice.dismiss': 'Dismiss',
     }
 
@@ -122,9 +140,9 @@ window.__ModuleLoader__.load({
      * 一条轻量的提示队列：模块级单例，供插槽里的提示组件订阅。
      *
      * @returns {{
-     *   push(text: string, kind: 'success' | 'error'): void,
+     *   push(text: string, kind: 'success' | 'error', action?: { label: string, run: () => void }): void,
      *   remove(id: number): void,
-     *   get(): Array<{ id: number, text: string, kind: string }>,
+     *   get(): Array<{ id: number, text: string, kind: string, action?: { label: string, run: () => void } }>,
      *   subscribe(listener: () => void): () => void,
      * }} 提示队列。
      */
@@ -148,11 +166,11 @@ window.__ModuleLoader__.load({
         emit()
       }
       return {
-        push(text, kind) {
+        push(text, kind, action) {
           const id = ++sequence
-          items = [...items, { id, text, kind }]
+          items = [...items, { id, text, kind, ...(action === undefined ? {} : { action }) }]
           emit()
-          window.setTimeout(() => drop(id), NOTICE_TIMEOUT)
+          window.setTimeout(() => drop(id), action === undefined ? NOTICE_TIMEOUT : NOTICE_ACTION_TIMEOUT)
         },
         remove: drop,
         get: () => items,
@@ -436,6 +454,22 @@ window.__ModuleLoader__.load({
           'div',
           { key: item.id, className: 'dsm-notice', 'data-kind': item.kind },
           h('span', { className: 'dsm-notice-text' }, item.text),
+          item.action === undefined ? null : h(
+            'button',
+            {
+              type: 'button',
+              className: 'dsm-notice-action',
+              onClick: () => {
+                notices.remove(item.id)
+                try {
+                  item.action.run()
+                } catch (error) {
+                  console.error(`[${PKG}] 提示条操作失败`, error)
+                }
+              },
+            },
+            item.action.label,
+          ),
           h(
             'button',
             {
@@ -473,6 +507,8 @@ window.__ModuleLoader__.load({
         `.dsm-notice[data-kind="success"] .dsm-notice-text{color:var(--dsw-alias-state-success-primary)}`,
         `.dsm-notice[data-kind="error"] .dsm-notice-text{color:var(--dsw-alias-state-error-primary)}`,
         `.dsm-notice-text{flex:1;min-width:0;overflow-wrap:anywhere}`,
+        `.dsm-notice-action{flex:none;padding:2px 8px;border:.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-brand-primary);font-size:12px;line-height:18px;cursor:pointer}`,
+        `.dsm-notice-action:hover{background:var(--dsw-alias-bg-layer-2)}`,
         `.dsm-notice-close{flex:none;width:16px;height:16px;padding:0;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:14px;line-height:16px;cursor:pointer}`,
         `.dsm-notice-close:hover{color:var(--dsw-alias-label-primary)}`,
       ].join('\n')
@@ -809,6 +845,74 @@ window.__ModuleLoader__.load({
       }
 
       /**
+       * 还原一个受管会话（撤销这次移动）。
+       *
+       * 宿主半会把它搬回 header 里的原目录；原项目已不存在时回到未分组。
+       * 这是「改归属」方案的安全出口：还原之后对话就与普通会话完全一样，
+       * 卸载插件也不会再有副作用。
+       *
+       * @param {string} sessionId - 会话标识。
+       */
+      const restore = async (sessionId) => {
+        try {
+          const response = await fetch(RESTORE_ROUTE, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sessionId }),
+          })
+          const payload = await response.json().catch(() => null)
+          if (!response.ok || payload?.ok !== true) {
+            const message = payload?.error?.message ?? `HTTP ${response.status}`
+            notices.push(t('restore.failed', { message }), 'error')
+            return
+          }
+          const result = payload.results?.[0]
+          if (result?.restored !== true) {
+            notices.push(t('restore.failed', { message: result?.reason ?? 'unknown' }), 'error')
+            return
+          }
+          void refreshOwnership()
+          notices.push(
+            result.to === null || result.to === undefined
+              ? t('restore.ungrouped')
+              : t('restore.done', { name: result.to.title ?? '' }),
+            'success',
+          )
+        } catch (error) {
+          notices.push(t('restore.failed', { message: String(error?.message ?? error) }), 'error')
+        }
+      }
+
+      /**
+       * 一键还原全部受管会话。
+       *
+       * 同时挂到 `window.__DSH_SESSION_MOVER__.restoreAll()`，方便在
+       * DevTools 里一次性收尾（例如准备卸载插件之前）。
+       *
+       * @returns {Promise<void>} 完成后刷新归属投影。
+       */
+      const restoreAll = async () => {
+        try {
+          const response = await fetch(RESTORE_ROUTE, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ all: true }),
+          })
+          const payload = await response.json().catch(() => null)
+          if (!response.ok || payload?.ok !== true) {
+            const message = payload?.error?.message ?? `HTTP ${response.status}`
+            notices.push(t('restore.failed', { message }), 'error')
+            return
+          }
+          const count = payload.restored ?? 0
+          void refreshOwnership()
+          notices.push(count === 0 ? t('restore.none') : t('restore.allDone', { count }), 'success')
+        } catch (error) {
+          notices.push(t('restore.failed', { message: String(error?.message ?? error) }), 'error')
+        }
+      }
+
+      /**
        * 调宿主的移动路由。
        *
        * @param sessionId - 会话标识。
@@ -845,6 +949,7 @@ window.__ModuleLoader__.load({
               ? t('move.noWorkingDirectory', { name })
               : t('move.moved', { name }),
             'success',
+            { label: t('move.undo'), run: () => { void restore(sessionId) } },
           )
         } catch (error) {
           notices.push(t('move.failed', { message: String(error?.message ?? error) }), 'error')
@@ -917,6 +1022,38 @@ window.__ModuleLoader__.load({
         }, `${PKG}: 拖拽接管`)
       } catch (error) {
         console.error(`[${PKG}] 拖拽监听挂载失败`, error)
+      }
+
+      // 控制台逃生通道：准备卸载/禁用插件之前，可以先一键还原全部受管会话。
+      // 这也是「插件缺席就掉组」这条风险的止损口子。
+      try {
+        ctx.effect(() => {
+          const api = {
+            restoreAll,
+            restore,
+            /**
+             * 取受管会话清单（只读）。
+             *
+             * @returns {Promise<{ sessions: Array<object>, summary: object } | null>} 清单。
+             */
+            async managed() {
+              try {
+                const response = await fetch(MANAGED_ROUTE, { headers: { accept: 'application/json' } })
+                if (!response.ok) return null
+                const payload = await response.json().catch(() => null)
+                return payload?.ok === true ? { sessions: payload.sessions ?? [], summary: payload.summary ?? {} } : null
+              } catch {
+                return null
+              }
+            },
+          }
+          window.__DSH_SESSION_MOVER__ = api
+          return () => {
+            if (window.__DSH_SESSION_MOVER__ === api) delete window.__DSH_SESSION_MOVER__
+          }
+        }, `${PKG}: 控制台接口`)
+      } catch (error) {
+        console.error(`[${PKG}] 控制台接口挂载失败`, error)
       }
     }
 

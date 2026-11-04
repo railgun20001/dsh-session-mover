@@ -2,7 +2,7 @@
   "name": "dsh-session-mover",
   "version": "0.1.0",
   "type": "module",
-  "description": "拖动会话到另一个项目分组，即可修改该对话的所属项目。",
+  "description": "拖动会话到另一个项目分组，修改其所属项目（只改归属账本与读取投影，不搬会话文件；支持还原与一键还原）。",
   "main": "index.js",
   "exports": {
     ".": {
@@ -20,17 +20,23 @@
     "client.js",
     "lib/core.js",
     "lib/fork.js",
+    "lib/guards.js",
+    "lib/journal.js",
+    "lib/managed.js",
     "lib/view.js",
     "lib/workdir.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
     "README.md",
+    "docs/acceptance.md",
     "test/core-test.mjs",
     "test/scroll-test.mjs",
     "test/view-test.mjs",
     "test/client-test.mjs",
-    "test/fork-test.mjs"
+    "test/fork-test.mjs",
+    "test/guard-test.mjs",
+    "test/managed-test.mjs"
   ],
   "dsh": {
     "bundle": {
@@ -46,7 +52,7 @@
     "manifestVersion": 1
   },
   "scripts": {
-    "test": "node test/core-test.mjs && node test/scroll-test.mjs && node test/view-test.mjs && node test/client-test.mjs && node test/fork-test.mjs",
+    "test": "node test/core-test.mjs && node test/scroll-test.mjs && node test/view-test.mjs && node test/client-test.mjs && node test/fork-test.mjs && node test/guard-test.mjs && node test/managed-test.mjs",
     "check": "node --check index.js && node --check client.js && npm test && npm pack --dry-run",
     "prepublishOnly": "npm run check"
   },
