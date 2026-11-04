@@ -23,7 +23,7 @@
  *    「改账本 → 同步工作目录 → 返回结果」；页面加载与每次移动后再取一次
  *    `/api/ownership`。桌面版的页面以 `dsh-app://` 协议装载，页面里的
  *    `fetch('/…')` 由壳层转发到宿主，因此客户端不需要任何端口或鉴权配置。
- *    另外提供 `/api/managed`（受管会话清单）与 `/api/restore`（一键还原）。
+ *    另外提供 `/api/managed`（受管会话清单，只读，供排障）。
  *
  * 5. **启动自检**：数一数受管会话、目标目录是否还在、原目录是否已经消失，
  *    把「插件缺席就会掉组」这件事尽量提前变成可见的日志。
@@ -45,8 +45,6 @@ import {
   inspectManagedSessions,
   isDirectory,
   pruneJournal,
-  restoreAllManaged,
-  restoreManagedSession,
   summarizeManaged,
 } from './lib/managed.js'
 import { installWorkspaceScopeView } from './lib/view.js'
@@ -72,24 +70,15 @@ const OWNERSHIP_PATH = `${ROUTE_PREFIX}/api/ownership`
 /**
  * 受管会话清单：`{ sessions: [...], summary: {...} }`。
  *
- * 「受管」= 被本插件移动过、header 还停在原目录的会话。排障与「一键还原」
- * 都用它；没有受管会话时返回空数组。
+ * 「受管」= 被本插件移动过、header 还停在原目录的会话。只读，供排障使用。
  */
 const MANAGED_PATH = `${ROUTE_PREFIX}/api/managed`
-
-/**
- * 还原接口：把受管会话搬回 header 里的原目录（原项目不在时回到未分组）。
- *
- * 请求体：`{ sessionId }` 还原一条；`{ all: true }` 一键还原全部。
- */
-const RESTORE_PATH = `${ROUTE_PREFIX}/api/restore`
 
 /** 每个路由允许的方法。 */
 const ROUTE_METHODS = {
   [MOVE_PATH]: 'POST',
   [OWNERSHIP_PATH]: 'GET',
   [MANAGED_PATH]: 'GET',
-  [RESTORE_PATH]: 'POST',
 }
 
 /** 请求体上限：只接受一个小 JSON，避免被当成任意上传通道。 */
@@ -215,7 +204,7 @@ function apply(ctx) {
     const registry = scoped.workspaceRegistry
     const logger = scoped.logger
 
-    // 移动日志：写前修复、启动自检与一键还原的事实来源。
+    // 移动日志：写前修复与启动自检的事实来源。
     // 构造不读盘、不会抛错；文件损坏时按空日志继续。
     const journal = createJournalStore(resolveJournalPath(), logger)
 
@@ -231,15 +220,15 @@ function apply(ctx) {
       logger?.warn?.(`[${PKG}] 重放归属账本失败（移动能力仍可尝试）`, error)
     }
 
-    // 历史遗留的移动（升级前没有日志）补登记：之后才有依据做写前修复与还原。
+    // 历史遗留的移动（升级前没有日志）补登记：之后才有依据做写前修复与自检。
     let adopted = 0
     try {
       adopted = adoptExistingMoves({ registry, journal, before })
     } catch (error) {
-      logger?.warn?.(`[${PKG}] 登记历史移动失败（自检与还原可能少几条）`, error)
+      logger?.warn?.(`[${PKG}] 登记历史移动失败（自检可能少几条）`, error)
     }
 
-    // 顺手清掉陈旧条目（会话已还原/被删/归属换到别的目录），避免日志无限增长。
+    // 顺手清掉陈旧条目（会话已拖回原项目/被删/归属换到别的目录），避免日志无限增长。
     let pruned = 0
     try {
       pruned = pruneJournal({ registry, journal })
@@ -332,7 +321,7 @@ function apply(ctx) {
         }
 
         if (url.pathname === MANAGED_PATH) {
-          // 受管会话清单：排障与前端「还原」入口共用同一份数据。
+          // 受管会话清单：只读排障数据。
           try {
             const rows = inspectManagedSessions({ registry, journal })
             respond(response, 200, {
@@ -357,38 +346,6 @@ function apply(ctx) {
             ok: false,
             error: { code: error.code ?? 'body/invalid', message: String(error.message ?? error) },
           })
-          return
-        }
-
-        if (url.pathname === RESTORE_PATH) {
-          // 还原：把受管会话搬回 header 里的原目录；原项目没了就回到未分组。
-          try {
-            if (body.all === true) {
-              const results = await restoreAllManaged({ ctx: scoped, registry, journal, logger })
-              respond(response, 200, {
-                ok: true,
-                restored: results.filter((item) => item.restored).length,
-                results,
-              })
-              return
-            }
-            const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
-            if (sessionId.length === 0) {
-              respond(response, 400, {
-                ok: false,
-                error: { code: 'request/invalid', message: 'sessionId 必须是非空字符串，或传 { all: true }' },
-              })
-              return
-            }
-            const result = await restoreManagedSession({ ctx: scoped, registry, journal, sessionId, logger })
-            respond(response, 200, { ok: true, restored: result.restored ? 1 : 0, results: [{ sessionId, ...result }] })
-          } catch (error) {
-            logger?.warn?.(`[${PKG}] 还原受管会话失败`, error)
-            respond(response, 500, {
-              ok: false,
-              error: { code: error?.code ?? 'restore/failed', message: String(error?.message ?? error) },
-            })
-          }
           return
         }
 
@@ -442,7 +399,7 @@ function apply(ctx) {
           if (result.changed) {
             // 登记受管会话：之后官方任何一次写都会先按这条记录修复索引，
             // 避免会话在无关操作（改名/排序/删除）里被静默剪掉。
-            // `home` 记 header 里的原始目录（还原目标），`from` 记本次的来源项目。
+            // `home` 记 header 里的原始目录（自检原目录是否还在），`from` 记本次的来源项目。
             const existing = journal.entry(sessionId)
             const parts = resolveRegistryParts(registry)
             const headerCwd = parts?.headers?.get(sessionId)?.cwd

@@ -47,8 +47,8 @@
  *
  * ## 视觉
  *
- * 只用 `--dsw-alias-*` 主题令牌；提示条渲染在 `shell.overlay` 插槽里，
- * 因此主题与语言都跟随宿主，不写 `document.body` 之外的内容。
+ * 插件不渲染任何常驻 UI：移动结果写进控制台日志（`console.info` / `console.warn`），
+ * 界面上只保留拖动期间的项目描边与源行淡化，颜色全部取自 `--dsw-alias-*` 主题令牌。
  *
  * @module dsh-session-mover/client
  */
@@ -60,19 +60,12 @@ window.__ModuleLoader__.load({
     const exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
-    const react = require('react')
-    const h = react.createElement
-
     /** 包名：日志、样式标签、路由前缀都用它。 */
     const PKG = 'dsh-session-mover'
-    /** 文案命名空间：与插槽注册的 `locale` 选项同名。 */
-    const NS = 'session-mover'
     /** 移动接口：与宿主半的 `MOVE_PATH` 一致。 */
     const MOVE_ROUTE = `/${PKG}/api/move`
     /** 归属投影接口：与宿主半的 `OWNERSHIP_PATH` 一致。 */
     const OWNERSHIP_ROUTE = `/${PKG}/api/ownership`
-    /** 还原接口：与宿主半的 `RESTORE_PATH` 一致（把受管会话搬回原目录）。 */
-    const RESTORE_ROUTE = `/${PKG}/api/restore`
     /** 受管会话清单接口：与宿主半的 `MANAGED_PATH` 一致（只读）。 */
     const MANAGED_ROUTE = `/${PKG}/api/managed`
     /** 拖动期间挂在 `<body>` 上的类名（用来点亮所有项目分组）。 */
@@ -81,10 +74,6 @@ window.__ModuleLoader__.load({
     const OVER_ATTR = 'data-dsm-over'
     /** 拖动源行上的标记属性。 */
     const SOURCE_ATTR = 'data-dsm-drag-source'
-    /** 提示条自动消失时间（毫秒）。 */
-    const NOTICE_TIMEOUT = 4000
-    /** 带操作按钮的提示条停留更久，给用户留出点「撤销」的时间。 */
-    const NOTICE_ACTION_TIMEOUT = 15000
 
     /**
      * 边缘自动滚动的触发带高度（CSS 像素）。
@@ -105,83 +94,6 @@ window.__ModuleLoader__.load({
     const SESSION_PREFIX = 'session:'
     /** 项目行标记前缀。 */
     const WORKSPACE_PREFIX = 'workspace:'
-
-    /** 简体中文字典（键集基准）。 */
-    const zh = {
-      'move.moved': '已移动到「{name}」',
-      'move.same': '这段对话已经在「{name}」里了',
-      'move.failed': '移动失败：{message}',
-      'move.noWorkingDirectory': '已移动到「{name}」（该对话尚未加载，工作目录保持不变）',
-      'move.undo': '还原',
-      'restore.done': '已还原到「{name}」',
-      'restore.ungrouped': '原项目已不存在，对话已回到未分组',
-      'restore.failed': '还原失败：{message}',
-      'restore.none': '没有需要还原的对话',
-      'restore.allDone': '已还原 {count} 个对话',
-      'notice.dismiss': '知道了',
-    }
-
-    /** 英文字典。 */
-    const en = {
-      'move.moved': 'Moved to “{name}”',
-      'move.same': 'This conversation is already in “{name}”',
-      'move.failed': 'Move failed: {message}',
-      'move.noWorkingDirectory': 'Moved to “{name}” (conversation not loaded; working directory unchanged)',
-      'move.undo': 'Restore',
-      'restore.done': 'Restored to “{name}”',
-      'restore.ungrouped': 'The original project is gone; the conversation is back under Ungrouped',
-      'restore.failed': 'Restore failed: {message}',
-      'restore.none': 'Nothing to restore',
-      'restore.allDone': 'Restored {count} conversation(s)',
-      'notice.dismiss': 'Dismiss',
-    }
-
-    /**
-     * 一条轻量的提示队列：模块级单例，供插槽里的提示组件订阅。
-     *
-     * @returns {{
-     *   push(text: string, kind: 'success' | 'error', action?: { label: string, run: () => void }): void,
-     *   remove(id: number): void,
-     *   get(): Array<{ id: number, text: string, kind: string, action?: { label: string, run: () => void } }>,
-     *   subscribe(listener: () => void): () => void,
-     * }} 提示队列。
-     */
-    function createNotices() {
-      let items = []
-      let sequence = 0
-      const listeners = new Set()
-      const emit = () => {
-        for (const listener of [...listeners]) {
-          try {
-            listener()
-          } catch (error) {
-            console.error(`[${PKG}] 提示订阅者抛错`, error)
-          }
-        }
-      }
-      const drop = (id) => {
-        const next = items.filter((item) => item.id !== id)
-        if (next.length === items.length) return
-        items = next
-        emit()
-      }
-      return {
-        push(text, kind, action) {
-          const id = ++sequence
-          items = [...items, { id, text, kind, ...(action === undefined ? {} : { action }) }]
-          emit()
-          window.setTimeout(() => drop(id), action === undefined ? NOTICE_TIMEOUT : NOTICE_ACTION_TIMEOUT)
-        },
-        remove: drop,
-        get: () => items,
-        subscribe(listener) {
-          listeners.add(listener)
-          return () => listeners.delete(listener)
-        },
-      }
-    }
-
-    const notices = createNotices()
 
     /**
      * 归属投影：sessionId → 所属项目目录。
@@ -379,7 +291,7 @@ window.__ModuleLoader__.load({
      * `createSnapshotStore` 的 `set` 是唯一写入口（首屏拉取、重连修复、增删改
      * 都经过它），所以在这里改写一次即可覆盖全部来源。
      *
-     * @param {object} ctx - 插槽作用域上下文（`sessions` 已就绪）。
+     * @param {object} ctx - 注入作用域上下文（`sessions` 已就绪）。
      * @returns {boolean} 是否接管成功。
      */
     function installCwdView(ctx) {
@@ -424,70 +336,6 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 当前语言的翻译函数。
-     *
-     * `shell.overlay` 的标准 props 里没有 `t`（它不按语言投影内容），所以提示条
-     * 自己持有一个在 `apply` 里绑定好的翻译函数：`ctx.locale.bind(NS)` 每次调用
-     * 都会读当前语言，切换语言后无需重新注册。
-     *
-     * @type {(key: string, params?: Record<string, unknown>) => string}
-     */
-    let translate = (key, params) => {
-      const template = zh[key] ?? key
-      if (params === undefined) return template
-      return template.replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? ''))
-    }
-
-    /**
-     * 提示条组件：渲染在 `shell.overlay` 里，靠模块级队列驱动。
-     *
-     * @returns 提示列表或 `null`。
-     */
-    function NoticeOverlay() {
-      const [items, setItems] = react.useState(notices.get)
-      react.useEffect(() => notices.subscribe(() => setItems(notices.get())), [])
-      if (items.length === 0) return null
-      return h(
-        'div',
-        { className: 'dsm-notices', role: 'status', 'aria-live': 'polite' },
-        items.map((item) => h(
-          'div',
-          { key: item.id, className: 'dsm-notice', 'data-kind': item.kind },
-          h('span', { className: 'dsm-notice-text' }, item.text),
-          item.action === undefined ? null : h(
-            'button',
-            {
-              type: 'button',
-              className: 'dsm-notice-action',
-              onClick: () => {
-                notices.remove(item.id)
-                try {
-                  item.action.run()
-                } catch (error) {
-                  console.error(`[${PKG}] 提示条操作失败`, error)
-                }
-              },
-            },
-            item.action.label,
-          ),
-          h(
-            'button',
-            {
-              type: 'button',
-              className: 'dsm-notice-close',
-              'aria-label': translate('notice.dismiss'),
-              onClick: () => {
-                /* 提示会自动过期；这里只是让用户提前收起。 */
-                notices.remove(item.id)
-              },
-            },
-            '×',
-          ),
-        )),
-      )
-    }
-
-    /**
      * 生成注入到页面的样式表。
      *
      * 说明：拖动高亮必须落在**官方渲染的行**上，所以只能用属性选择器；
@@ -501,16 +349,6 @@ window.__ModuleLoader__.load({
         `body.${DRAG_CLASS} [data-row-key^="${WORKSPACE_PREFIX}"]{outline:1px dashed var(--dsw-alias-border-l2);outline-offset:-1px;border-radius:var(--dsw-radius-md);cursor:copy}`,
         `body.${DRAG_CLASS} [data-row-key^="${WORKSPACE_PREFIX}"][${OVER_ATTR}]{outline:1px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2)}`,
         `body.${DRAG_CLASS} [data-row-key^="${SESSION_PREFIX}"][${SOURCE_ATTR}]{opacity:.45}`,
-        /* ── 提示条：右下角浮层，风格对齐宿主的浮层卡片 ── */
-        `.dsm-notices{position:fixed;right:16px;bottom:16px;z-index:2147483000;display:flex;flex-direction:column;gap:8px;pointer-events:none}`,
-        `.dsm-notice{pointer-events:auto;display:flex;align-items:flex-start;gap:8px;max-width:340px;padding:10px 12px;border-radius:var(--dsw-radius-md);border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);font-size:13px;line-height:20px;box-shadow:0 8px 24px rgba(0,0,0,.18)}`,
-        `.dsm-notice[data-kind="success"] .dsm-notice-text{color:var(--dsw-alias-state-success-primary)}`,
-        `.dsm-notice[data-kind="error"] .dsm-notice-text{color:var(--dsw-alias-state-error-primary)}`,
-        `.dsm-notice-text{flex:1;min-width:0;overflow-wrap:anywhere}`,
-        `.dsm-notice-action{flex:none;padding:2px 8px;border:.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-brand-primary);font-size:12px;line-height:18px;cursor:pointer}`,
-        `.dsm-notice-action:hover{background:var(--dsw-alias-bg-layer-2)}`,
-        `.dsm-notice-close{flex:none;width:16px;height:16px;padding:0;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:14px;line-height:16px;cursor:pointer}`,
-        `.dsm-notice-close:hover{color:var(--dsw-alias-label-primary)}`,
       ].join('\n')
     }
 
@@ -652,7 +490,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 插件入口：文案、样式、提示插槽、拖拽监听。
+     * 插件入口：样式、会话摘要投影、拖拽监听。
      *
      * 每一项都单独 try/catch：任何一环失败只丢那一项，绝不让 apply 抛错
      * （apply 抛错会让整个页面起不来）。
@@ -660,24 +498,6 @@ window.__ModuleLoader__.load({
      * @param ctx - 插件上下文。
      */
     function apply(ctx) {
-      try {
-        ctx.effect(() => ctx.locale.register(NS, { zh, en }), `${PKG}: 文案`)
-      } catch (error) {
-        console.error(`[${PKG}] 文案注册失败`, error)
-      }
-
-      let t = (key, params) => {
-        const template = zh[key] ?? key
-        if (params === undefined) return template
-        return template.replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? ''))
-      }
-      try {
-        t = ctx.locale.bind(NS)
-      } catch (error) {
-        console.error(`[${PKG}] 文案绑定失败（使用内置中文）`, error)
-      }
-      translate = t
-
       try {
         ctx.effect(() => {
           const tag = document.createElement('style')
@@ -688,22 +508,6 @@ window.__ModuleLoader__.load({
         }, `${PKG}: 样式`)
       } catch (error) {
         console.error(`[${PKG}] 样式注入失败`, error)
-      }
-
-      try {
-        ctx.slots.inject('shell.overlay', () => {
-          try {
-            return ctx.slots.register(
-              { name: 'shell.overlay', id: `${PKG}-notice`, order: 900 },
-              NoticeOverlay,
-            )
-          } catch (error) {
-            console.error(`[${PKG}] 提示条注册失败（已忽略）`, error)
-            return () => {}
-          }
-        })
-      } catch (error) {
-        console.error(`[${PKG}] 提示条挂载失败`, error)
       }
 
       try {
@@ -845,75 +649,10 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * 还原一个受管会话（撤销这次移动）。
-       *
-       * 宿主半会把它搬回 header 里的原目录；原项目已不存在时回到未分组。
-       * 这是「改归属」方案的安全出口：还原之后对话就与普通会话完全一样，
-       * 卸载插件也不会再有副作用。
-       *
-       * @param {string} sessionId - 会话标识。
-       */
-      const restore = async (sessionId) => {
-        try {
-          const response = await fetch(RESTORE_ROUTE, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ sessionId }),
-          })
-          const payload = await response.json().catch(() => null)
-          if (!response.ok || payload?.ok !== true) {
-            const message = payload?.error?.message ?? `HTTP ${response.status}`
-            notices.push(t('restore.failed', { message }), 'error')
-            return
-          }
-          const result = payload.results?.[0]
-          if (result?.restored !== true) {
-            notices.push(t('restore.failed', { message: result?.reason ?? 'unknown' }), 'error')
-            return
-          }
-          void refreshOwnership()
-          notices.push(
-            result.to === null || result.to === undefined
-              ? t('restore.ungrouped')
-              : t('restore.done', { name: result.to.title ?? '' }),
-            'success',
-          )
-        } catch (error) {
-          notices.push(t('restore.failed', { message: String(error?.message ?? error) }), 'error')
-        }
-      }
-
-      /**
-       * 一键还原全部受管会话。
-       *
-       * 同时挂到 `window.__DSH_SESSION_MOVER__.restoreAll()`，方便在
-       * DevTools 里一次性收尾（例如准备卸载插件之前）。
-       *
-       * @returns {Promise<void>} 完成后刷新归属投影。
-       */
-      const restoreAll = async () => {
-        try {
-          const response = await fetch(RESTORE_ROUTE, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ all: true }),
-          })
-          const payload = await response.json().catch(() => null)
-          if (!response.ok || payload?.ok !== true) {
-            const message = payload?.error?.message ?? `HTTP ${response.status}`
-            notices.push(t('restore.failed', { message }), 'error')
-            return
-          }
-          const count = payload.restored ?? 0
-          void refreshOwnership()
-          notices.push(count === 0 ? t('restore.none') : t('restore.allDone', { count }), 'success')
-        } catch (error) {
-          notices.push(t('restore.failed', { message: String(error?.message ?? error) }), 'error')
-        }
-      }
-
-      /**
        * 调宿主的移动路由。
+       *
+       * 结果写进控制台：插件不渲染提示条，移动成功后界面上的唯一变化就是
+       * 会话出现在目标项目下、文件树/「打开文件夹」改指新目录。
        *
        * @param sessionId - 会话标识。
        * @param workspaceId - 目标项目标识。
@@ -933,26 +672,21 @@ window.__ModuleLoader__.load({
           const payload = await response.json().catch(() => null)
           if (!response.ok || payload?.ok !== true) {
             const message = payload?.error?.message ?? `HTTP ${response.status}`
-            notices.push(t('move.failed', { message }), 'error')
+            console.warn(`[${PKG}] 移动失败：${message}`)
             return
           }
-          const name = payload.workspace?.title ?? ''
           if (payload.alreadyThere === true) {
-            notices.push(t('move.same', { name }), 'success')
+            console.info(`[${PKG}] 会话 ${sessionId} 已在目标项目里`)
             return
           }
           // 归属变了：重新取一次账本投影并重放快照，让文件树 /「打开文件夹」
           // 立刻指向新目录（不等下一次列表刷新）。
           void refreshOwnership()
-          notices.push(
-            payload.workingDirectory === 'skipped'
-              ? t('move.noWorkingDirectory', { name })
-              : t('move.moved', { name }),
-            'success',
-            { label: t('move.undo'), run: () => { void restore(sessionId) } },
-          )
+          const name = payload.workspace?.title ?? ''
+          const directory = payload.workingDirectory === 'skipped' ? '工作目录保持不变' : '工作目录已切换'
+          console.info(`[${PKG}] 已把会话 ${sessionId} 移到「${name}」（${directory}）`)
         } catch (error) {
-          notices.push(t('move.failed', { message: String(error?.message ?? error) }), 'error')
+          console.warn(`[${PKG}] 移动失败：${String(error?.message ?? error)}`)
         }
       }
 
@@ -1024,13 +758,10 @@ window.__ModuleLoader__.load({
         console.error(`[${PKG}] 拖拽监听挂载失败`, error)
       }
 
-      // 控制台逃生通道：准备卸载/禁用插件之前，可以先一键还原全部受管会话。
-      // 这也是「插件缺席就掉组」这条风险的止损口子。
+      // 控制台诊断接口：只读，不提供任何改动数据的操作。
       try {
         ctx.effect(() => {
           const api = {
-            restoreAll,
-            restore,
             /**
              * 取受管会话清单（只读）。
              *
@@ -1057,7 +788,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    exports.inject = ['slots', 'locale']
+    exports.inject = []
     exports.apply = apply
     return module.exports
   },

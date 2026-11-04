@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Session Drag Mover",
-    "description": "Drag a conversation in the sidebar onto another project group to change which project it belongs to (ownership ledger + read-side projection only; no session files are moved; undo and one-click restore included)."
+    "description": "Drag a conversation in the sidebar onto another project group to change which project it belongs to (ownership ledger + read-side projection only; no session files are moved; no extra UI)."
   }
 }

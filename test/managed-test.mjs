@@ -1,11 +1,10 @@
 /**
- * dsh-session-mover —— 受管会话自检与还原的单元测试。
+ * dsh-session-mover —— 受管会话自检与日志清理的单元测试。
  *
  * 覆盖：
  *   1. 清单里的「目标目录/原目录是否存在」判定；
- *   2. 原项目还在时，还原 = 把会话记回原项目账本并清掉日志；
- *   3. 原项目已消失时，还原 = 从账本摘下、回到未分组；
- *   4. 一键还原的计数与逐条结果。
+ *   2. 账本里没有、或归属已换目录的陈旧日志条目会被跳过与清理；
+ *   3. 路径比较规则。
  *
  * 运行：node test/managed-test.mjs
  */
@@ -19,14 +18,12 @@ import { createJournalStore } from '../lib/journal.js'
 import {
   inspectManagedSessions,
   pruneJournal,
-  restoreAllManaged,
-  restoreManagedSession,
   samePath,
   summarizeManaged,
 } from '../lib/managed.js'
 
 /**
- * 最小 workspace 实体替身：只实现还原路径用到的方法。
+ * 最小 workspace 实体替身：只实现清单/清理路径用到的方法。
  */
 class MockEntity {
   /**
@@ -212,102 +209,10 @@ test('清单跳过日志指向与账本不一致的陈旧条目', async () => {
       sessionPaths: { s1: a },
     })
     assert.deepEqual(inspectManagedSessions({ registry, journal }), [])
-    const result = await restoreManagedSession({ registry, journal, sessionId: 's1' })
-    assert.equal(result.restored, false)
-    assert.equal(result.reason, 'journal/stale')
+    // 清理时把这条陈旧记录删掉。
+    assert.equal(pruneJournal({ registry, journal }), 1)
     assert.deepEqual(registry.record('A').sessionIds, ['s1'])
     assert.equal(journal.entry('s1'), null)
-  })
-})
-
-test('还原：原项目还在 → 记回原项目并清掉日志', async () => {
-  await withTempDir(async (dir) => {
-    const a = join(dir, 'A')
-    const b = join(dir, 'B')
-    mkdirSync(a, { recursive: true })
-    mkdirSync(b, { recursive: true })
-    const journal = createJournalStore(join(dir, 'journal.json'))
-    journal.record('s1', { path: b, from: a, kind: 'move' })
-    const registry = createMockRegistry({
-      workspaces: [
-        { id: 'A', title: 'A', path: a, sessionIds: [] },
-        { id: 'B', title: 'B', path: b, sessionIds: ['s1'] },
-      ],
-      sessionPaths: { s1: b },
-      headers: { s1: { cwd: a } },
-    })
-    const result = await restoreManagedSession({ registry, journal, sessionId: 's1' })
-    assert.equal(result.restored, true)
-    assert.equal(result.to?.id, 'A')
-    assert.deepEqual(registry.record('A').sessionIds, ['s1'])
-    assert.deepEqual(registry.record('B').sessionIds, [])
-    assert.equal(journal.entry('s1'), null)
-  })
-})
-
-test('还原：原项目已消失 → 从账本摘下、回到未分组', async () => {
-  await withTempDir(async (dir) => {
-    const b = join(dir, 'B')
-    mkdirSync(b, { recursive: true })
-    const gone = join(dir, 'gone')
-    const journal = createJournalStore(join(dir, 'journal.json'))
-    journal.record('s1', { path: b, from: gone, kind: 'move' })
-    const registry = createMockRegistry({
-      workspaces: [{ id: 'B', title: 'B', path: b, sessionIds: ['s1', 's2'] }],
-      sessionPaths: { s1: b, s2: b },
-      headers: { s1: { cwd: gone } },
-    })
-    const result = await restoreManagedSession({ registry, journal, sessionId: 's1' })
-    assert.equal(result.restored, true)
-    assert.equal(result.to, null)
-    assert.deepEqual(registry.record('B').sessionIds, ['s2'])
-    assert.equal(registry.paths.has('s1'), false)
-    assert.equal(journal.entry('s1'), null)
-  })
-})
-
-test('还原：原目录未知时只清日志、不动账本', async () => {
-  await withTempDir(async (dir) => {
-    const b = join(dir, 'B')
-    mkdirSync(b, { recursive: true })
-    const journal = createJournalStore(join(dir, 'journal.json'))
-    journal.record('s1', { path: b })
-    const registry = createMockRegistry({
-      workspaces: [{ id: 'B', title: 'B', path: b, sessionIds: ['s1'] }],
-      sessionPaths: { s1: b },
-      headers: { s1: {} },
-    })
-    const result = await restoreManagedSession({ registry, journal, sessionId: 's1' })
-    assert.equal(result.restored, false)
-    assert.equal(result.reason, 'home/unknown')
-    assert.deepEqual(registry.record('B').sessionIds, ['s1'])
-    assert.equal(journal.entry('s1'), null)
-  })
-})
-
-test('一键还原：逐条返回结果并统计成功数', async () => {
-  await withTempDir(async (dir) => {
-    const a = join(dir, 'A')
-    const b = join(dir, 'B')
-    mkdirSync(a, { recursive: true })
-    mkdirSync(b, { recursive: true })
-    const journal = createJournalStore(join(dir, 'journal.json'))
-    journal.record('s1', { path: b, from: a, kind: 'move' })
-    journal.record('s2', { path: b, from: join(dir, 'missing'), kind: 'move' })
-    const registry = createMockRegistry({
-      workspaces: [
-        { id: 'A', title: 'A', path: a, sessionIds: [] },
-        { id: 'B', title: 'B', path: b, sessionIds: ['s1', 's2'] },
-      ],
-      sessionPaths: { s1: b, s2: b },
-      headers: { s1: { cwd: a }, s2: { cwd: join(dir, 'missing') } },
-    })
-    const results = await restoreAllManaged({ registry, journal })
-    assert.equal(results.length, 2)
-    assert.equal(results.filter((item) => item.restored).length, 2)
-    assert.deepEqual(registry.record('A').sessionIds, ['s1'])
-    assert.deepEqual(registry.record('B').sessionIds, [])
-    assert.deepEqual(journal.entries(), [])
   })
 })
 
@@ -331,33 +236,6 @@ test('清理陈旧日志：账本里没有、或归属已换目录的条目被�
     const removed = pruneJournal({ registry, journal })
     assert.equal(removed, 2)
     assert.deepEqual(journal.entries().map((entry) => entry.sessionId), ['live'])
-  })
-})
-
-test('还原：多次移动后仍回到 header 原始目录（home 优先于 from）', async () => {
-  await withTempDir(async (dir) => {
-    const a = join(dir, 'A')
-    const b = join(dir, 'B')
-    const c = join(dir, 'C')
-    for (const p of [a, b, c]) mkdirSync(p, { recursive: true })
-    const journal = createJournalStore(join(dir, 'journal.json'))
-    // A → B → C：日志 path 是 C，home 仍是 A，from 只是上一次的 B。
-    journal.record('s1', { path: c, home: a, from: b, kind: 'move' })
-    const registry = createMockRegistry({
-      workspaces: [
-        { id: 'A', title: 'A', path: a, sessionIds: [] },
-        { id: 'B', title: 'B', path: b, sessionIds: [] },
-        { id: 'C', title: 'C', path: c, sessionIds: ['s1'] },
-      ],
-      sessionPaths: { s1: c },
-      headers: { s1: { cwd: a } },
-    })
-    const result = await restoreManagedSession({ registry, journal, sessionId: 's1' })
-    assert.equal(result.restored, true)
-    assert.equal(result.to?.id, 'A')
-    assert.deepEqual(registry.record('A').sessionIds, ['s1'])
-    assert.deepEqual(registry.record('B').sessionIds, [])
-    assert.deepEqual(registry.record('C').sessionIds, [])
   })
 })
 
