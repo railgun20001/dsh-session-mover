@@ -14,6 +14,27 @@
 | 插件版本 | 0.1.0 |
 | 操作系统 | Windows 11（主目标平台）；Linux 仅需覆盖纯逻辑路径 |
 
+## 最近一次自动化执行（2026-11-04）
+
+隔离实例：独立 `DSH_HOME` + `dsh --profile e2e`（CLI 0.2.0-rc.2），插件以 `link:`
+安装，通过页面内 JSON-RPC 与插件 HTTP 路由驱动，**没有调用真实模型**。
+
+| 用例 | 结果 | 说明 |
+|---|---|---|
+| A1 移动到另一个项目 | ✅ | `/api/move` 返回 `changed: true`，`/api/ownership` 由 A 变 B |
+| B1 重启后保持 | ✅ | 杀掉唯一宿主进程后重启，`/api/ownership` 仍为 B，`/api/managed` 仍列出该会话 |
+| C1 改名触发剪枝 | ✅ | `workspace/rename` 成功后会话仍在 B（写前护栏生效） |
+| C5 归档/取消归档 | ✅ | 两次操作后归属仍是 B |
+| D2 从移动过的会话分叉 | ✅ | `session/fork` 成功，子会话落到 B（`kind: fork`），无 `workspace-attach-failed` |
+| D3 分叉再分叉 | ✅ | 孙会话同样落到 B |
+| E1 单条还原 | ✅ | 回到 A，`/api/managed` 清空 |
+| E2 一键还原 | ✅ | `{all:true}` 一次还原 4 个，全部回到 A |
+| 目标目录缺失 | ✅ | 移动返回 409 `workspace/missing-dir`，原归属不变 |
+| 旧宿主工作目录兼容 | ✅ | 0.2.0-rc.2 没有 `workingDirectory` 服务，`workingDirectory` 返回 `skipped`，日志不写未知事件 |
+
+**未覆盖（仍需人工/桌面端）**：真实拖拽手势与提示条交互、文件树/「打开文件夹」的 UI 表现、
+desktop 0.2.1-rc.5 的同类回归、双 profile 与多标签页。这几项在下面的 A/B/H/G 用例里保持 `⏳`。
+
 ## 用例
 
 图例：`⏳` 待执行、`✅` 通过、`❌` 失败（失败时把日志片段贴在本节下方）。

@@ -36,7 +36,8 @@
     "test/client-test.mjs",
     "test/fork-test.mjs",
     "test/guard-test.mjs",
-    "test/managed-test.mjs"
+    "test/managed-test.mjs",
+    "test/workdir-test.mjs"
   ],
   "dsh": {
     "bundle": {
@@ -52,7 +53,7 @@
     "manifestVersion": 1
   },
   "scripts": {
-    "test": "node test/core-test.mjs && node test/scroll-test.mjs && node test/view-test.mjs && node test/client-test.mjs && node test/fork-test.mjs && node test/guard-test.mjs && node test/managed-test.mjs",
+    "test": "node test/core-test.mjs && node test/scroll-test.mjs && node test/view-test.mjs && node test/client-test.mjs && node test/fork-test.mjs && node test/guard-test.mjs && node test/managed-test.mjs && node test/workdir-test.mjs",
     "check": "node --check index.js && node --check client.js && npm test && npm pack --dry-run",
     "prepublishOnly": "npm run check"
   },

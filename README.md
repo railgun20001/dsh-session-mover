@@ -147,6 +147,10 @@ DSH 把「会话属于哪个项目」记在两处：
 
 护栏同理：实体原型上拿不到 `mutate` / `attachSession` 时只记日志，官方行为保持原样。
 
+工作目录同步也按「宿主有没有这个服务」决定：旧宿主（如 0.2.0-rc.2）没有
+`workingDirectory` 服务时，插件只改归属、不写 `working-directory/change` 事件——
+那个版本不注册该事件类型，写进去会让日志变成「未知事件」，之后 fork / 读取都会拒绝解析。
+
 ## 已知边界
 
 - **不是文件迁移**：会话 JSONL、附件、崩溃恢复目录仍在原项目目录。删除/改名旧项目文件夹、
@@ -168,6 +172,7 @@ node test/client-test.mjs   # 客户端半：快照 cwd 改写、行/快照复�
 node test/fork-test.mjs     # 分叉跟随：账本/索引/工作目录对齐与全部降级分支
 node test/guard-test.mjs    # 护栏：写前修复、attach 接管、日志存取
 node test/managed-test.mjs  # 自检与还原：清单、原项目还原、原项目消失、日志清理
+node test/workdir-test.mjs  # 工作目录：Agent/会话/旧宿主三条路径
 ```
 
 真机验收矩阵见 [docs/acceptance.md](docs/acceptance.md)。
