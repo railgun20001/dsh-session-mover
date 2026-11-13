@@ -8,9 +8,9 @@
 
 | 项 | 值 |
 |---|---|
-| DSH 版本 | 待填（`dsh --version` / 桌面版「关于」） |
-| profile | 待填（`web` / `desktop`） |
-| Node | 待填（`node -v`） |
+| DSH 版本 | 0.2.2-rc.3（桌面版 exe 文件版本；`dsh` CLI 不在 PATH） |
+| profile | desktop |
+| Node | v24.22.1 |
 | 插件版本 | 0.1.1 |
 | 操作系统 | Windows 11（主目标平台）；Linux 仅需覆盖纯逻辑路径 |
 
@@ -32,6 +32,21 @@
 
 **未覆盖（仍需人工/桌面端）**：真实拖拽手势、文件树/「打开文件夹」的 UI 表现、
 desktop 0.2.1-rc.5 的同类回归、双 profile 与多标签页。这几项在下面的 A/B/H/G 用例里保持 `⏳`。
+
+## 真机验收记录（2026-11-14）
+
+用户真实环境（非隔离实例）：DSH 0.2.2-rc.3 桌面版，宿主进程 04:40:10 启动；插件 0.1.1 以
+`link:` 指向本仓库，修复代码在启动前已落盘（本地提交于 01:38）。补登记行为仅存在于 0.1.1，
+它的执行本身即证明当前宿主已装载新代码。
+
+| # | 结果 | 证据 |
+|---|---|---|
+| D6 | ✅ 通过（04:40） | `journal-v1.json` 在 04:40:17–04:40:32 逐条新增 **22 条 `kind: "fork"`** 登记（`home/from = C:\work\my` → `path = C:\work\my\web\manju-assets`），间隔约 0.5–2 秒，与逐会话冷读认亲的节奏一致；数量与修复前只读演练清点的 22 条「未分组」候选一致，含已知样例 `session-94aa7c10…`，全部归位。05:41 经 `/api/ownership` 与 `/api/managed` 复核：22 条仍全部指向 `C:\work\my\web\manju-assets`，`targetMissing=0`、`sourceMissing=0` |
+| D5 | ⏳ 待手势 | 04:40 后新建的 6 条会话均非分叉（`isSeeded=false`），该路径尚未在真机触发。建议从一条移动过的会话（`manju-assets` 下 header 原目录为 `C:\work\my` 的那条）发起分叉复核：子会话应立即出现在 `manju-assets`，不落「未分组」 |
+
+> 局限如实记录：宿主日志文件未定位到（`~/.dsh/logs` 只存 2026-10-22 的旧启动日志），
+> 「启动补登记独立分叉：…」汇总行未取得，以上结论以账本文件与只读接口为准；
+> 侧栏分组与 `/api/ownership` 同源于宿主内存索引，界面级核对请直接在侧栏确认。
 
 ## 用例
 
@@ -132,4 +147,4 @@ npm run check   # 语法 + 全部用例 + 打包清单
 
 ## 失败记录
 
-- **2026-11-14，D5（用户报告：移动后，分支对话不在目录下，而是未分组）**：DSH 0.2.2-rc.2 上，普通分叉 header 已省略 `parentSession`（官方 0.2.1-rc.3「独立 Session fork」变更），旧版插件的 `forkFactsOf()` 与 `adoptManagedAttach()` 都把该字段当必需条件，导致 `attachSession` 失败后既不接管账本也不补索引，新分叉显示「未分组」。真实会话日志的 seed 继承段仍带 `session-log-deepseek/delivery-accepted.data.sessionId`，并用宿主选中的 attach 目标确认项目；修复见 0.1.1：新增 `lib/fork-origin.js` 三层来源判定、`lib/backfill.js` 启动补登记与对应回归测试。真机 D5/D6 仍按上表执行；本次已验证磁盘 header 与账本、全部自动化用例、语法与打包清单。
+- **2026-11-14，D5（用户报告：移动后，分支对话不在目录下，而是未分组）**：DSH 0.2.2-rc.2 上，普通分叉 header 已省略 `parentSession`（官方 0.2.1-rc.3「独立 Session fork」变更），旧版插件的 `forkFactsOf()` 与 `adoptManagedAttach()` 都把该字段当必需条件，导致 `attachSession` 失败后既不接管账本也不补索引，新分叉显示「未分组」。真实会话日志的 seed 继承段仍带 `session-log-deepseek/delivery-accepted.data.sessionId`，并用宿主选中的 attach 目标确认项目；修复见 0.1.1：新增 `lib/fork-origin.js` 三层来源判定、`lib/backfill.js` 启动补登记与对应回归测试。真机 D6 已于 2026-11-14 04:40 通过（22/22 归位，证据见上方「真机验收记录」）；D5 仍待真机手势执行。当时已验证磁盘 header 与账本、全部自动化用例、语法与打包清单。
