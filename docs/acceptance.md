@@ -11,7 +11,7 @@
 | DSH 版本 | 待填（`dsh --version` / 桌面版「关于」） |
 | profile | 待填（`web` / `desktop`） |
 | Node | 待填（`node -v`） |
-| 插件版本 | 0.1.0 |
+| 插件版本 | 0.1.1 |
 | 操作系统 | Windows 11（主目标平台）；Linux 仅需覆盖纯逻辑路径 |
 
 ## 最近一次自动化执行（2026-11-04）
@@ -73,10 +73,15 @@ desktop 0.2.1-rc.5 的同类回归、双 profile 与多标签页。这几项在�
 | D2 | 从**移动过**的会话分叉 | 移动 A→B，再分叉该会话 | **不出现** `session/workspace-attach-failed`；子会话进 B；日志出现「按归属账本接管」 |
 | D3 | 分叉会话再分叉 | 对 D2 的子会话再分叉 | 仍进 B，链路不断 |
 | D4 | 父会话未分组时分叉 | 把父会话移出所有项目后再分叉 | 子会话进未分组，不报错 |
+| D5 | 独立分叉（0.2.1-rc.3+） | 在 0.2.2-rc.2 / 0.2.2-rc.3 上从移动过的会话分叉（header 无 `parentSession`） | 子会话立刻进 B，不落「未分组」；日志出现「按归属账本接管」与「分叉会话…跟随到…」 |
+| D6 | 历史独立分叉启动补登记 | 用旧版插件制造「未分组」分叉 → 升级到 0.1.1 → 重启宿主 | 启动日志出现「启动补登记独立分叉：…归位 1 个」；该会话回到 B，重启后仍在 B |
+| D7 | 独立分叉来源歧义 | 两个项目都从 A 移入过会话，且历史分叉无继承投递标记 | 保持「未分组」，不猜错项目；手动拖到目标项目一次后正常 |
 
-> D2 是本次护栏的主要目标：官方 `forkWorkspace()` 按账本选 B，而 `attachSession()`
-> 要求 `header.cwd === B`，移动过的会话 header 仍是 A，必然校验失败。若 D2 仍报错，
+> D2 是本次护栏的主要目标：官方 `forkWorkspace()` 按账本选 B，而
+> `attachSession()` 要求 `header.cwd === B`，移动过的会话 header 仍是 A，必然校验失败。若 D2 仍报错，
 > 说明实体的 `attachSession` 不是从原型可达的那一个，需回到 `lib/guards.js` 排查。
+> D5/D6 是 0.2.1-rc.3+ 的「独立分叉」回归：header 已不写 `parentSession`，必须改由
+> seed 继承投递标记、attach 目标与唯一原始目录候选证明来源。
 
 ### E. 卸载
 
@@ -118,11 +123,13 @@ npm run check   # 语法 + 全部用例 + 打包清单
 | 用例文件 | 覆盖 |
 |---|---|
 | `test/core-test.mjs` | 账本移动、幂等、锚点、启动重放、归属投影 |
-| `test/guard-test.mjs` | 写前修复（防剪枝）、attach 按账本接管、无关 attach 仍抛错、日志读写容错 |
+| `test/guard-test.mjs` | 写前修复（防剪枝）、attach 按账本接管（含独立分叉）、无关 attach 仍抛错、日志读写容错 |
 | `test/managed-test.mjs` | 自检清单、陈旧条目跳过与日志清理 |
 | `test/fork-test.mjs` | 分叉对齐与全部降级分支 |
+| `test/fork-origin-test.mjs` | 独立分叉：seed 来源链、attach 目标、唯一目录候选、路径归一化 |
+| `test/backfill-test.mjs` | 启动补登记：已知来源链、嵌套分叉、歧义跳过、服务缺席降级 |
 | `test/view-test.mjs` / `test/client-test.mjs` / `test/scroll-test.mjs` | 读取侧投影、客户端快照、边缘滚动 |
 
 ## 失败记录
 
-（验收失败时在此追加：日期、场景编号、复现步骤、DSH 日志片段、是否已修复。）
+- **2026-11-14，D5（用户报告：移动后，分支对话不在目录下，而是未分组）**：DSH 0.2.2-rc.2 上，普通分叉 header 已省略 `parentSession`（官方 0.2.1-rc.3「独立 Session fork」变更），旧版插件的 `forkFactsOf()` 与 `adoptManagedAttach()` 都把该字段当必需条件，导致 `attachSession` 失败后既不接管账本也不补索引，新分叉显示「未分组」。真实会话日志的 seed 继承段仍带 `session-log-deepseek/delivery-accepted.data.sessionId`，并用宿主选中的 attach 目标确认项目；修复见 0.1.1：新增 `lib/fork-origin.js` 三层来源判定、`lib/backfill.js` 启动补登记与对应回归测试。真机 D5/D6 仍按上表执行；本次已验证磁盘 header 与账本、全部自动化用例、语法与打包清单。

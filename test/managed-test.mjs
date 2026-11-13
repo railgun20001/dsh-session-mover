@@ -239,11 +239,15 @@ test('清理陈旧日志：账本里没有、或归属已换目录的条目被�
   })
 })
 
-test('路径比较：尾部分隔符与 Windows 大小写', () => {
+test('路径比较：尾部分隔符、Windows 分隔符与大小写', () => {
   assert.equal(samePath('C:/A/', 'C:/A'), true)
   assert.equal(samePath('C:/A', 'C:/B'), false)
   assert.equal(samePath('', 'C:/A'), false)
-  if (process.platform === 'win32') assert.equal(samePath('C:/A', 'c:/a'), true)
+  if (process.platform === 'win32') {
+    assert.equal(samePath('C:/A', 'c:/a'), true)
+    assert.equal(samePath('C:\\A\\', 'c:/a'), true)
+    assert.equal(samePath('C:/A\\Sub', 'C:\\A\\sub'), true)
+  }
 })
 
 /** 依次跑完全部用例。 */

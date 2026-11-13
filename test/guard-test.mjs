@@ -230,6 +230,70 @@ test('分叉子会话（header 仍指向旧目录）能按账本接管 attach', 
   })
 })
 
+test('0.2.1-rc.3+ 独立分叉（header 无 parentSession）按受管会话原始目录接管 attach', async () => {
+  await withTempDir(async (dir) => {
+    const journal = createJournalStore(join(dir, 'journal.json'))
+    // 父会话 p 被从 A 移到 B；普通分叉 c 只带 isSeeded + 旧 cwd，不写来源字段。
+    journal.record('p', { path: 'C:/B', home: 'C:/A', from: 'C:/A', kind: 'move' })
+    const registry = createMockRegistry({
+      workspaces: [{ id: 'B', title: 'B', path: 'C:/B', sessionIds: ['p'] }],
+      sessionPaths: { p: 'C:/B', c: 'C:/A' },
+      headers: { c: { cwd: 'C:/A', isSeeded: true } },
+    })
+    const guards = installEntityGuards({ registry, journal })
+    try {
+      await registry.get('B').attachSession('c')
+      assert.deepEqual(registry.record('B').sessionIds, ['c', 'p'])
+      assert.equal(registry.paths.get('c'), 'C:/B')
+      assert.equal(journal.entry('c').kind, 'fork')
+    } finally {
+      guards.dispose()
+    }
+  })
+})
+
+test('独立分叉但原始目录与本项目受管会话无关时仍拒绝 attach', async () => {
+  await withTempDir(async (dir) => {
+    const journal = createJournalStore(join(dir, 'journal.json'))
+    journal.record('p', { path: 'C:/B', home: 'C:/A', from: 'C:/A', kind: 'move' })
+    const registry = createMockRegistry({
+      workspaces: [{ id: 'B', title: 'B', path: 'C:/B', sessionIds: ['p'] }],
+      sessionPaths: { p: 'C:/B', x: 'C:/X' },
+      headers: { x: { cwd: 'C:/X', isSeeded: true } },
+    })
+    const guards = installEntityGuards({ registry, journal })
+    try {
+      await assert.rejects(() => registry.get('B').attachSession('x'), /cannot attach/)
+      assert.deepEqual(registry.record('B').sessionIds, ['p'])
+    } finally {
+      guards.dispose()
+    }
+  })
+})
+
+test('账本已归属别的项目时，attach 护栏不会抢走会话', async () => {
+  await withTempDir(async (dir) => {
+    const journal = createJournalStore(join(dir, 'journal.json'))
+    journal.record('p', { path: 'C:/B', home: 'C:/A', from: 'C:/A', kind: 'move' })
+    const registry = createMockRegistry({
+      workspaces: [
+        { id: 'B', title: 'B', path: 'C:/B', sessionIds: ['p'] },
+        { id: 'C', title: 'C', path: 'C:/C', sessionIds: ['x'] },
+      ],
+      sessionPaths: { p: 'C:/B', x: 'C:/C' },
+      headers: { x: { cwd: 'C:/A', isSeeded: true } },
+    })
+    const guards = installEntityGuards({ registry, journal })
+    try {
+      await assert.rejects(() => registry.get('B').attachSession('x'), /cannot attach/)
+      assert.deepEqual(registry.record('B').sessionIds, ['p'])
+      assert.deepEqual(registry.record('C').sessionIds, ['x'])
+    } finally {
+      guards.dispose()
+    }
+  })
+})
+
 test('与账本无关的会话仍按官方规则拒绝 attach', async () => {
   await withTempDir((dir) => {
     const journal = createJournalStore(join(dir, 'journal.json'))

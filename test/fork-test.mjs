@@ -123,15 +123,103 @@ function test(name, run) {
   cases.push({ name, run })
 }
 
-test('分叉事实识别：只认带种子的普通分叉', () => {
+test('独立分叉读不到来源链且未分组时，只有唯一原始目录候选才跟随项目', async () => {
+  const registry = createRegistry({
+    workspaces: [
+      { id: 'ws-old', path: 'C:\\work\\old', sessionIds: [] },
+      { id: 'ws-new', path: 'C:\\work\\new', sessionIds: ['parent'] },
+    ],
+    sessionPaths: { parent: 'C:\\work\\new' },
+  })
+  const { ctx } = createContext({ agent: { id: 'agent-1' } })
+  const session = forkSession({ id: 'child', parentId: 'parent', cwd: 'C:\\work\\old' })
+  delete session.header.parentSession
+  const journal = {
+    entry: () => null,
+    entries: () => [{ sessionId: 'parent', path: 'C:\\work\\new', home: 'C:\\work\\old', from: 'C:\\work\\old' }],
+    record: () => null,
+    save: () => true,
+  }
+
+  const result = await reconcileForkedSession(ctx, registry, session, undefined, journal)
+
+  assert.equal(result.path, 'C:\\work\\new')
+  assert.deepEqual(readRawSessionIds(registry, 'ws-new'), ['child', 'parent'])
+  assert.equal(registry.sessionPaths.get('child'), 'C:\\work\\new')
+})
+
+test('普通分叉已被官方安置到原项目时，不按同源目录改挂别的项目', async () => {
+  const registry = createRegistry({
+    workspaces: [
+      { id: 'ws-old', path: 'C:\\work\\old', sessionIds: ['child', 'plain-parent'] },
+      { id: 'ws-new', path: 'C:\\work\\new', sessionIds: ['moved-parent'] },
+    ],
+    sessionPaths: {
+      child: 'C:\\work\\old',
+      'plain-parent': 'C:\\work\\old',
+      'moved-parent': 'C:\\work\\new',
+    },
+  })
+  const { ctx, calls } = createContext({ agent: { id: 'agent-1' } })
+  const session = forkSession({ id: 'child', parentId: 'plain-parent', cwd: 'C:\\work\\old' })
+  delete session.header.parentSession
+  const journal = {
+    entry: () => null,
+    entries: () => [{ sessionId: 'moved-parent', path: 'C:\\work\\new', home: 'C:\\work\\old', from: 'C:\\work\\old' }],
+    record: () => null,
+    save: () => true,
+  }
+
+  const result = await reconcileForkedSession(ctx, registry, session, undefined, journal)
+
+  assert.deepEqual(result.changed, [])
+  assert.deepEqual(readRawSessionIds(registry, 'ws-old'), ['child', 'plain-parent'])
+  assert.deepEqual(readRawSessionIds(registry, 'ws-new'), ['moved-parent'])
+  assert.deepEqual(calls, [])
+})
+
+test('attach 护栏已按宿主选中的项目接管时，日志优先于目录推断', async () => {
+  const registry = createRegistry({
+    workspaces: [
+      { id: 'ws-old', path: 'C:\\work\\old', sessionIds: [] },
+      { id: 'ws-new', path: 'C:\\work\\new', sessionIds: ['child', 'parent'] },
+    ],
+    sessionPaths: { parent: 'C:\\work\\new', child: 'C:\\work\\new' },
+  })
+  const { ctx, calls } = createContext({ agent: { id: 'agent-1' } })
+  const session = forkSession({ id: 'child', parentId: 'parent', cwd: 'C:\\work\\old' })
+  delete session.header.parentSession
+  const journal = {
+    entry: (id) => (id === 'child' ? { path: 'C:\\work\\new', home: 'C:\\work\\old' } : null),
+    entries: () => [{ sessionId: 'parent', path: 'C:\\work\\new', home: 'C:\\work\\old' }],
+    record: () => null,
+    save: () => true,
+  }
+
+  const result = await reconcileForkedSession(ctx, registry, session, undefined, journal)
+
+  assert.equal(result.path, 'C:\\work\\new')
+  assert.equal(result.workingDirectory, 'agent')
+  assert.deepEqual(readRawSessionIds(registry, 'ws-new'), ['child', 'parent'])
+  assert.deepEqual(calls, ['set:C:\\work\\new'])
+})
+
+test('分叉事实识别：带种子且不是子代理就纳入判定（来源可后续解析）', () => {
   assert.deepEqual(forkFactsOf(forkSession({ id: 'c1', parentId: 'p1', cwd: 'C:\\a' })), {
     sessionId: 'c1',
     parentId: 'p1',
+    parentFromHeader: true,
+    cwd: 'C:\\a',
+  })
+  assert.deepEqual(forkFactsOf({ id: 'c1', header: { isSeeded: true, cwd: 'C:\\a' } }), {
+    sessionId: 'c1',
+    parentId: undefined,
+    parentFromHeader: false,
     cwd: 'C:\\a',
   })
   assert.equal(forkFactsOf(forkSession({ id: 'c1', parentId: 'p1', overrides: { isSeeded: false } })), null)
   assert.equal(forkFactsOf(forkSession({ id: 'c1', parentId: 'p1', overrides: { origin: 'subagent' } })), null)
-  assert.equal(forkFactsOf({ id: 'c1', header: { isSeeded: true } }), null)
+  assert.equal(forkFactsOf({ id: 'c1', header: {} }), null)
   assert.equal(forkFactsOf(undefined), null)
 })
 
@@ -166,6 +254,43 @@ test('账本已在父会话项目里、只是索引没登记：只补索引（�
   assert.deepEqual(result.changed.sort(), ['index', 'workdir'])
   assert.equal(registry.sessionPaths.get('child'), 'C:\\work\\new')
   assert.deepEqual(readRawSessionIds(registry, 'ws-new'), ['child', 'parent'])
+})
+
+test('0.2.1-rc.3+ 独立分叉（header 只有 isSeeded 与旧 cwd）跟随父项目归属', async () => {
+  const registry = createRegistry({
+    workspaces: [
+      { id: 'ws-old', path: 'C:\\work\\old', sessionIds: [] },
+      { id: 'ws-new', path: 'C:\\work\\new', sessionIds: ['parent'] },
+    ],
+    sessionPaths: { parent: 'C:\\work\\new' },
+  })
+  const { ctx, calls } = createContext({ agent: { id: 'agent-1' } })
+  const session = forkSession({ id: 'child', parentId: 'parent', cwd: 'C:\\work\\old' })
+  // 宿主 0.2.1-rc.3 起普通分叉省略 parentSession，且不写 header 替代来源字段。
+  // seed 继承前缀里的投递标记仍指向已知来源；这里模拟宿主的 live Session。
+  delete session.header.parentSession
+  session.inheritedEventCount = 1
+  session.snapshotEvents = (from = 0, to = 1) => [
+    { type: 'session-log-deepseek/delivery-accepted', data: { sessionId: 'parent' } },
+    { type: 'session/end-seed', data: { inherited: true } },
+  ].slice(from, to)
+  // 真实宿主里 parent 是「从 old 移到 new」的受管会话；这条日志让 seed 来源
+  // 与目标项目内同源受管会话互相印证，排除只是祖先标记的情况。
+  const journal = {
+    entry: () => null,
+    entries: () => [{ sessionId: 'parent', path: 'C:\\work\\new', home: 'C:\\work\\old', from: 'C:\\work\\old' }],
+    record: () => null,
+    save: () => true,
+  }
+
+  const result = await reconcileForkedSession(ctx, registry, session, undefined, journal)
+
+  assert.notEqual(result.reason, 'not-a-fork')
+  assert.equal(result.path, 'C:\\work\\new')
+  assert.deepEqual(result.changed.sort(), ['ledger', 'workdir'])
+  assert.deepEqual(readRawSessionIds(registry, 'ws-new'), ['child', 'parent'])
+  assert.equal(registry.sessionPaths.get('child'), 'C:\\work\\new')
+  assert.deepEqual(calls, ['set:C:\\work\\new'])
 })
 
 test('普通分叉（官方 attach 已完成、子会话 cwd 就是项目目录）什么都不做', async () => {

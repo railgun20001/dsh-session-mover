@@ -40,6 +40,7 @@ import { moveSessionInRegistry, ownershipPaths, replayOwnership, resolveRegistry
 import { alignAgentWorkingDirectory, reconcileForkedSession } from './lib/fork.js'
 import { installEntityGuards, withMoveInFlight } from './lib/guards.js'
 import { createJournalStore, resolveJournalPath } from './lib/journal.js'
+import { backfillIndependentForks } from './lib/backfill.js'
 import {
   adoptExistingMoves,
   inspectManagedSessions,
@@ -256,6 +257,27 @@ function apply(ctx) {
       logger?.warn?.(`[${PKG}] 启动自检失败`, error)
     }
 
+    // 启动补登记：修复前的独立分叉可能已经掉到「未分组」，下次启动按 seed
+    // 里的来源链/唯一原始目录接回项目。等 sessionQuery 就绪后异步跑，读失败
+    // 只影响补登记，不阻塞移动、路由和护栏。
+    let backfill = { scanned: 0, candidates: 0, adopted: 0, skipped: 0, reason: 'pending' }
+    try {
+      scoped.inject(['sessionQuery'], (queryScope) => {
+        const query = queryScope.sessionQuery
+        queryScope.effect(() => {
+          let disposed = false
+          void backfillIndependentForks({ query, registry, journal, logger, isActive: () => !disposed })
+            .then((result) => { backfill = result })
+            .catch((error) => {
+              logger?.warn?.(`[${PKG}] 启动补登记独立分叉失败（已有分组不受影响）`, error)
+            })
+          return () => { disposed = true }
+        }, `${PKG}: 启动补登记独立分叉`)
+      })
+    } catch (error) {
+      logger?.warn?.(`[${PKG}] 无法声明 sessionQuery 依赖（历史独立分叉不会自动归位）`, error)
+    }
+
     // 分叉会话跟随父会话的项目。
     //
     // DSH 的分叉把父会话 header 里的**原始 cwd** 写给子会话，所以从「移动过的
@@ -434,7 +456,7 @@ function apply(ctx) {
       },
     }), `${PKG}: 移动路由`)
 
-    scoped.logger?.info?.(`[${PKG}] 已挂载：${MOVE_PATH}（归属账本修正 ${replayed.applied} 条，支持=${replayed.supported}；新登记 ${adopted} 条历史移动，清理 ${pruned} 条陈旧日志；写前护栏=${guards.installed ? guards.reason : '未安装'}）`)
+    scoped.logger?.info?.(`[${PKG}] 已挂载：${MOVE_PATH}（归属账本修正 ${replayed.applied} 条，支持=${replayed.supported}；新登记 ${adopted} 条历史移动，清理 ${pruned} 条陈旧日志；历史分叉补登记=${backfill.reason ?? '已完成'}；写前护栏=${guards.installed ? guards.reason : '未安装'}）`)
 
     // 读取侧工作区视图：等 typert 就绪后接管 `workspaceFileScope`。
     //
