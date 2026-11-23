@@ -243,11 +243,13 @@ test('路径比较：尾部分隔符、Windows 分隔符与大小写', () => {
   assert.equal(samePath('C:/A/', 'C:/A'), true)
   assert.equal(samePath('C:/A', 'C:/B'), false)
   assert.equal(samePath('', 'C:/A'), false)
-  if (process.platform === 'win32') {
-    assert.equal(samePath('C:/A', 'c:/a'), true)
-    assert.equal(samePath('C:\\A\\', 'c:/a'), true)
-    assert.equal(samePath('C:/A\\Sub', 'C:\\A\\sub'), true)
-  }
+  // Windows 风格路径的折叠规则不依赖宿主平台（Linux CI 上同样成立）
+  assert.equal(samePath('C:/A', 'c:/a'), true)
+  assert.equal(samePath('C:\\A\\', 'c:/a'), true)
+  assert.equal(samePath('C:/A\\Sub', 'C:\\A\\sub'), true)
+  // POSIX 风格路径保持大小写敏感的精确比较
+  assert.equal(samePath('/a/b', '/A/B'), false)
+  assert.equal(samePath('/a/b/', '/a/b'), true)
 })
 
 /** 依次跑完全部用例。 */
